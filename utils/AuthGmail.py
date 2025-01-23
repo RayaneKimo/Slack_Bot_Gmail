@@ -6,8 +6,11 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 
 # If modifying these SCOPES, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
-
+SCOPES = [
+    # 'https://www.googleapis.com/auth/gmail.readonly',
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.modify"
+]
 def authenticate_gmail():
     """
     Using the credentials.json file, authenticate the user with the Gmail API

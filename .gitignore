@@ -3,6 +3,8 @@ credentials.json
 token.json
 test.ipynb
 screenshot.png
+audio_message.mp4
+audio_message.wav
 # Ignore node_modules directory
 node_modules/
 

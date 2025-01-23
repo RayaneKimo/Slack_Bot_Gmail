@@ -17,6 +17,10 @@ from googleapiclient.discovery import build
 import base64
 import html2text
 from slack_sdk.errors import SlackApiError
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import json
+from email.utils import parseaddr
 
 
 # Initialize a Gemini model appropriate for your use case.
@@ -32,6 +36,7 @@ messages = []
 
 creds = authenticate_gmail()
 service = build('gmail', 'v1', credentials=creds)
+profile = service.users().getProfile(userId='me').execute()
 messages = fetch_inbox_emails(service, labelIds=['INBOX'])
 messages = [{**msg, "content": decode_content(service, msg)[2]} for msg in messages]
 unread_messages = fetch_inbox_emails(service, labelIds=['INBOX', 'UNREAD'])
@@ -52,7 +57,8 @@ def Analyze_client_request(client_message, context, client_audio):
     prompt = f"""You are an AI assistant. Gather all the inputs (audio, text, and image) you are afforded and analyze:\n
          - First, if the client wants to reply to the email and he has provided a reply in the thread, then formulate a professional
          email response according to its audio and text inputs (**Without mentioning the Subject in the response**).\n
-          You should respond with a formal email response :  Entrance + Body + Conclusion + Signature\n
+          You should respond with a formal email response containing:  Entrance + Body + Conclusion + Signature. But without mentioning this
+         attributes (Entrance, Body, Conclusion and Signature)\n
 
          - Second, if the client request is not a reply to an email or it's misunderstood, then reply with a message accordingly, either
          'Sorry I didn't get your request. Could you please provide more detail?'\n
@@ -129,7 +135,8 @@ def handle_message_events(body, say):
              else : 
                 response = "Sorry I didn't get your request. Could you please provide more detail?"
         
-        
+        last_msg_id_thread_id = str(discussion[0]["id"]) +'-'+ str(first_msg["threadId"])
+         
         client.chat_postMessage(
             channel=channel_id,
             thread_ts=thread_ts,  # Reply in the same thread
@@ -140,6 +147,7 @@ def handle_message_events(body, say):
                     "text": {
                         "type": "mrkdwn",
                         "text": response
+                        
                     }
                 },
                 {
@@ -152,7 +160,9 @@ def handle_message_events(body, say):
                                 "text": "Send Email"
                             },
                             "style": "primary",  # Green button
-                            "action_id": "send_email_button"  # Unique ID for the button action
+                            "action_id": "send_email_button",  # Unique ID for the button action
+                            "value" : last_msg_id_thread_id
+                           
                         }
                     ]
                 }
@@ -191,7 +201,15 @@ def handle_button_click(ack, body, client):
     ack()
 
     # Get the trigger ID (required to open a dialog or modal)
+    
     trigger_id = body["trigger_id"]
+    message = body["message"]["text"]
+    last_msg_id_thread_id = body["actions"][0]["value"]
+    private_metadata = json.dumps({
+        "text": message,
+        "last_msg_id": last_msg_id_thread_id.split('-')[0],
+        "thread_id": last_msg_id_thread_id.split('-')[1]
+    })
 
     # Open a confirmation dialog
     try:
@@ -200,6 +218,7 @@ def handle_button_click(ack, body, client):
             view={
                 "type": "modal",
                 "callback_id": "confirm_send_email",
+                "private_metadata": private_metadata,
                 "title": {
                     "type": "plain_text",
                     "text": "Confirm Email"
@@ -210,12 +229,13 @@ def handle_button_click(ack, body, client):
                         "text": {
                             "type": "mrkdwn",
                             "text": "Are you sure you want to send this email?"
-                        }
+                        },
                     }
                 ],
                 "submit": {
                     "type": "plain_text",
-                    "text": "Send"
+                    "text": "Send",
+                    
                 },
                 "close": {
                     "type": "plain_text",
@@ -225,6 +245,67 @@ def handle_button_click(ack, body, client):
         )
     except SlackApiError as e:
         print(f"Error opening confirmation dialog: {e.response['error']}")
+
+
+
+def create_reply_message(sender, to, subject, message_text, thread_id):
+    """Create a MIME message for replying."""
+    message = MIMEText(message_text)
+    message['to'] = to
+    message['from'] = sender
+    message['subject'] = subject
+    message['In-Reply-To'] = thread_id  # Add the thread ID for threading
+    message['References'] = thread_id  # Add the thread ID for threading
+    return {'raw': base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')}
+
+def reply_to_email(service, sender, to, subject, message_text, thread_id):
+    """Reply to an email using the Gmail API."""
+    try:
+        message = create_reply_message(sender, to, subject, message_text, thread_id)
+        sent_message = service.users().messages().send(userId='me', body=message).execute()
+        print(f"Reply sent! Message ID: {sent_message['id']}")
+    except Exception as e:
+        print(f"Error replying to email: {e}")
+
+
+
+@app.view("confirm_send_email")
+def handle_view_submission_events(ack, body, logger):
+    # Acknowledge the confirmation
+    ack()
+
+    # Get the user ID and channel ID
+    private_metadata = body["view"]["private_metadata"]
+    metadata = json.loads(private_metadata)
+
+    msg = service.users().messages().get(userId='me', id=metadata["last_msg_id"], format='full').execute()
+    my_email_address = profile["emailAddress"]
+
+    for header in msg["payload"]["headers"]:
+        if header["name"] == "From":
+            sender = header["value"]
+        elif header["name"] == "To":
+            receiver = header["value"]
+        elif header["name"] == "Subject":
+            subject = header["value"]
+    
+    # check if the sender it's me or the client, if it's me then the receiver is the client
+    if parseaddr(sender)[1] == my_email_address:
+        sender = my_email_address
+        to = parseaddr(receiver)[1]
+    else : 
+        to = parseaddr(sender)[1]
+        sender = my_email_address
+
+    # Send the email (replace with your email sending logic)
+    reply_to_email(service, sender, to, subject, metadata["text"], metadata["thread_id"])
+
+
+    # Notify the user using le logger
+    try:
+        logger.info("Email sent successfully!")
+    except SlackApiError as e:
+        print(f"Error sending confirmation message: {e.response['error']}")
 
 # Listen to a vocal message and generate a response
 # @app.event("message")
