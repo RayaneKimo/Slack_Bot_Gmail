@@ -8,13 +8,14 @@ def fetch_inbox_emails(service, labelIds=['INBOX']):
         labelIds: The labelIds of the messages to retrieve.
     """
     
-    results = service.users().messages().list(userId='me', labelIds=labelIds).execute()
+    results = service.users().messages().list(userId='me', labelIds=labelIds,  maxResults=10).execute()
     messages = results.get('messages', [])
     if not messages:
         print("No messages found.")
     else:
         print("Messages loaded successfully.")
     return  messages
+
 
 
 def decode_content(service, message):
@@ -34,4 +35,4 @@ def decode_content(service, message):
                         return body, msg, part['body']['data']
             else:
                 body = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
-                return body, msg, part['body']['data']
+                return body, msg, None

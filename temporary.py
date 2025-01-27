@@ -21,6 +21,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 from email.utils import parseaddr
+import smtplib
+from email.message import EmailMessage
 
 
 # Initialize a Gemini model appropriate for your use case.
@@ -248,24 +250,35 @@ def handle_button_click(ack, body, client):
 
 
 
-def create_reply_message(sender, to, subject, message_text, thread_id):
-    """Create a MIME message for replying."""
-    message = MIMEText(message_text)
-    message['to'] = to
-    message['from'] = sender
-    message['subject'] = subject
-    message['In-Reply-To'] = thread_id  # Add the thread ID for threading
-    message['References'] = thread_id  # Add the thread ID for threading
-    return {'raw': base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')}
+def create_reply_message(sender, to, subject,message_id, message_text, thread_id=None):
+    """Create a reply email message."""
+    message = EmailMessage()
+    message['To'] = to
+    message['From'] = sender
+    message['Subject'] = subject
+    message['References '] = message_id
+    message.set_content(message_text)
+    message['In-Reply-To '] = message_id
 
-def reply_to_email(service, sender, to, subject, message_text, thread_id):
+    encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+    created_message = {'raw': encoded_message,
+                    'threadId': thread_id}
+    
+    return created_message
+
+def reply_to_email(service, sender, to, subject, message_text, thread_id, message_id):
     """Reply to an email using the Gmail API."""
     try:
-        message = create_reply_message(sender, to, subject, message_text, thread_id)
-        sent_message = service.users().messages().send(userId='me', body=message).execute()
+        subject = f"Re: {subject}"
+        message = create_reply_message(sender, to, subject,message_id, message_text, thread_id)
+        sent_message = service.users().messages().send(userId="me", body=message).execute()
+
         print(f"Reply sent! Message ID: {sent_message['id']}")
     except Exception as e:
         print(f"Error replying to email: {e}")
+
+#
 
 
 
@@ -288,6 +301,8 @@ def handle_view_submission_events(ack, body, logger):
             receiver = header["value"]
         elif header["name"] == "Subject":
             subject = header["value"]
+        elif header["name"] == "Message-ID":
+            message_id = header["value"]
     
     # check if the sender it's me or the client, if it's me then the receiver is the client
     if parseaddr(sender)[1] == my_email_address:
@@ -298,8 +313,9 @@ def handle_view_submission_events(ack, body, logger):
         sender = my_email_address
 
     # Send the email (replace with your email sending logic)
-    reply_to_email(service, sender, to, subject, metadata["text"], metadata["thread_id"])
-
+    reply_to_email(service, sender, to, subject, metadata["text"], metadata["thread_id"], message_id)
+    # password = os.environ.get("PASSWORD")
+    # send_reply_via_smtp(to, subject, metadata["text"], sender, password, metadata["last_msg_id"])
 
     # Notify the user using le logger
     try:
