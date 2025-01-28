@@ -1,9 +1,6 @@
-// render.js
 const puppeteer = require('puppeteer');
-const fs = require('fs');
 
 const htmlContent = process.argv[2]; // The second argument is the HTML content
-
 
 (async () => {
     // Launch a headless browser
@@ -15,10 +12,27 @@ const htmlContent = process.argv[2]; // The second argument is the HTML content
         waitUntil: 'networkidle0' // Wait for the page to fully load
     });
 
-    // Take a screenshot
+    // Evaluate the bounding box of the content
+    const clip = await page.evaluate(() => {
+        const content = document.body.querySelector('*'); // Capture the first visible element
+        if (!content) {
+            throw new Error('No content found on the page!');
+        }
+        const { x, y, width, height } = content.getBoundingClientRect();
+        const padding = 20; // Add padding (in pixels) to all sides
+
+        return {
+            x: Math.max(0, x - padding), // Prevent negative x
+            y: Math.max(0, y - padding), // Prevent negative y
+            width: width + 2 * padding,
+            height: height + 2 * padding
+        };
+    });
+
+    // Take a screenshot of the content only
     await page.screenshot({
         path: 'screenshot.png', // Save the screenshot as an image
-        fullPage: true // Capture the entire page
+        clip: clip // Capture only the content's bounding box with padding
     });
 
     // Close the browser

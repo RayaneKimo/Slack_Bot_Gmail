@@ -21,7 +21,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 from email.utils import parseaddr
-import smtplib
+import html
 from email.message import EmailMessage
 
 
@@ -45,6 +45,15 @@ unread_messages = fetch_inbox_emails(service, labelIds=['INBOX', 'UNREAD'])
 
 
 
+def html_to_markdown(html_content):
+    """Convert HTML content to Markdown."""
+    text_maker = html2text.HTML2Text()
+    text_maker.ignore_links = False  # Keep links in the Markdown output
+    text_maker.ignore_images = True  # Optional: Ignore images in the conversion
+    text_maker.ignore_emphasis = False  # Keep bold and italic formatting
+
+    return text_maker.handle(html_content)
+
 def Aggregate_messages(messages):
     """Aggregate the messages in the inbox"""
     context= ""
@@ -60,7 +69,21 @@ def Analyze_client_request(client_message, context, client_audio):
          - First, if the client wants to reply to the email and he has provided a reply in the thread, then formulate a professional
          email response according to its audio and text inputs (**Without mentioning the Subject in the response**).\n
           You should respond with a formal email response containing:  Entrance + Body + Conclusion + Signature. But without mentioning this
-         attributes (Entrance, Body, Conclusion and Signature)\n
+         attributes (Entrance, Body, Conclusion and Signature)
+         Make sure the format of the email is as the next example: 
+         \n
+         '<div dir="ltr">Hello [Receiver],\xa0<div><br></div><div> [BODY]</div><div><br></div><div>Sincerely,</div><div><br></div><div>[Sender]</div></div>\r\n'
+         This exemple is just an example, you should not include it in the response .\n
+
+         Give me the same response in the form of a normal text message.\n and separate both of them with "----", like :\n
+            "" <div dir="ltr">Hello [Receiver],\xa0<div><br></div><div> [BODY]</div><div><br></div><div>[Sign-off]</div><div><br></div><div>[Sender]</div></div>\r\n
+            ----
+            Hello [Receiver]\n 
+              [Body]\n
+              [Sign-off]\n
+            [Sender]\n
+            ""
+         \n
 
          - Second, if the client request is not a reply to an email or it's misunderstood, then reply with a message accordingly, either
          'Sorry I didn't get your request. Could you please provide more detail?'\n
@@ -138,17 +161,17 @@ def handle_message_events(body, say):
                 response = "Sorry I didn't get your request. Could you please provide more detail?"
         
         last_msg_id_thread_id = str(discussion[0]["id"]) +'-'+ str(first_msg["threadId"])
-         
+        # markdown_text = html_to_markdown(response)
         client.chat_postMessage(
             channel=channel_id,
             thread_ts=thread_ts,  # Reply in the same thread
-            text=response,  # Fallback text
+            text=response.split("----")[0],  # Fallback text
             blocks=[
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": response
+                        "text": response.split("----")[1]
                         
                     }
                 },
@@ -170,8 +193,9 @@ def handle_message_events(body, say):
                 }
             ]
             )
-        
-    else : 
+    
+    # if the message is hello 
+    elif event.get("text") == "hello":
              
             
             event = body.get("event", {})
@@ -180,7 +204,6 @@ def handle_message_events(body, say):
             email_body, payload, hashed_text =  decode_content(service, message)
             take_screen_shot(email_body)
             client = WebClient(token=os.environ.get("SLACK_BOT_TOKEN"))    
-            # response = client.files_upload_v2(
 
             response = client.files_upload_v2(
                 channels=channel_id,  # Replace with your channel ID
@@ -205,7 +228,7 @@ def handle_button_click(ack, body, client):
     # Get the trigger ID (required to open a dialog or modal)
     
     trigger_id = body["trigger_id"]
-    message = body["message"]["text"]
+    message = html.unescape(body["message"]["text"].strip(" '"))
     last_msg_id_thread_id = body["actions"][0]["value"]
     private_metadata = json.dumps({
         "text": message,
@@ -257,8 +280,10 @@ def create_reply_message(sender, to, subject,message_id, message_text, thread_id
     message['From'] = sender
     message['Subject'] = subject
     message['References '] = message_id
-    message.set_content(message_text)
     message['In-Reply-To '] = message_id
+    # Render the email with right HTML format to display
+    message.add_alternative(message_text, subtype='html')
+    
 
     encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
@@ -278,7 +303,7 @@ def reply_to_email(service, sender, to, subject, message_text, thread_id, messag
     except Exception as e:
         print(f"Error replying to email: {e}")
 
-#
+
 
 
 
